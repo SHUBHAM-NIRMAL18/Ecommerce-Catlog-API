@@ -1,17 +1,19 @@
 from decimal import Decimal
 
 from django.db import connection
-from django.db.models import Case, F, IntegerField, OuterRef, Prefetch, Q, Subquery, Value, When
+from django.db.models import Case, Count, F, IntegerField, OuterRef, Prefetch, Q, Subquery, Value, When
 from django.db.models.expressions import RawSQL
 from django.db.models.functions import Least
 from rest_framework.decorators import api_view
 from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
-from catalog.models import Product, ProductImage, ProductVariant
+from catalog.models import Brand, Category, Collection, Product, ProductImage, ProductVariant
 
-from .pagination import page_response, paginate
+from .pagination import PageQuerySerializer, page_response, paginate
 from .serializers import (
+    BrandSerializer,
+    CollectionSerializer,
     ProductDetailSerializer,
     ProductListSerializer,
     ProductQuerySerializer,
@@ -177,6 +179,75 @@ def product_reviews(request, slug):
 def product_similar(request, slug):
     product = get_visible_product(slug, visible_products().select_related("category"))
     return Response({"items": ProductListSerializer(similar_products(product), many=True).data})
+
+
+ACTIVE = Product.Status.ACTIVE
+
+
+@api_view(["GET"])
+def category_list(request):
+    """Category tree. Counts only visible products (R1); a main category's count includes its subs."""
+    categories = list(
+        Category.objects.annotate(
+            direct_count=Count("products", filter=Q(products__status=ACTIVE))
+        ).order_by("id")  # the shop's own order from catalog.json
+    )
+
+    def node(category):
+        return {"slug": category.slug, "name": category.name, "productCount": category.direct_count, "children": []}
+
+    nodes = {c.id: node(c) for c in categories}
+    tree = []
+    for category in categories:
+        if category.parent_id is None:
+            tree.append(nodes[category.id])
+        else:
+            parent = nodes[category.parent_id]
+            parent["children"].append(nodes[category.id])
+            parent["productCount"] += category.direct_count
+    return Response({"items": tree})
+
+
+@api_view(["GET"])
+def brand_list(request):
+    brands = Brand.objects.annotate(
+        product_count=Count("products", filter=Q(products__status=ACTIVE))
+    ).order_by("name", "id")
+    return Response({"items": BrandSerializer(brands, many=True).data})
+
+
+def visible_collections():
+    """R4: active and inside its date window today. productCount counts visible products only (R1)."""
+    return Collection.objects.live().annotate(
+        product_count=Count("items", filter=Q(items__product__status=ACTIVE))
+    )
+
+
+@api_view(["GET"])
+def collection_list(request):
+    collections = visible_collections().order_by("id")
+    return Response({"items": CollectionSerializer(collections, many=True).data})
+
+
+@api_view(["GET"])
+def collection_detail(request, slug):
+    params = PageQuerySerializer(data=request.query_params)
+    params.is_valid(raise_exception=True)
+    p = params.validated_data
+
+    collection = visible_collections().filter(slug=slug).first()
+    if collection is None:
+        raise NotFound(f"Collection '{slug}' not found.")
+
+    # The collection's own order (position); hidden products are left out (R1).
+    products = with_card_data(
+        visible_products().filter(collection_items__collection=collection)
+    ).order_by("collection_items__position", "id")
+    rows, meta = paginate(products, p["page"], p["limit"])
+    return Response({
+        "collection": CollectionSerializer(collection).data,
+        **page_response(ProductListSerializer(rows, many=True).data, meta),
+    })
 
 
 @api_view(["GET"])
