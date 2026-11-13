@@ -145,6 +145,23 @@ class ProductDetailSerializer(ProductListSerializer):
         return path
 
 
+class BrandSerializer(serializers.Serializer):
+    slug = serializers.CharField()
+    name = serializers.CharField()
+    country = serializers.CharField()
+    productCount = serializers.IntegerField(source="product_count")
+
+
+class CollectionSerializer(serializers.Serializer):
+    id = serializers.CharField(source="source_id")
+    slug = serializers.CharField()
+    name = serializers.CharField()
+    description = serializers.CharField()
+    startsAt = serializers.DateTimeField(source="starts_at")
+    endsAt = serializers.DateTimeField(source="ends_at")
+    productCount = serializers.IntegerField(source="product_count")
+
+
 class ReviewSerializer(serializers.Serializer):
     id = serializers.CharField(source="source_id")
     rating = serializers.IntegerField()
