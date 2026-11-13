@@ -1,12 +1,23 @@
+from decimal import Decimal
+
 from django.db import connection
-from django.db.models import F, OuterRef, Prefetch, Q, Subquery
+from django.db.models import Case, F, IntegerField, OuterRef, Prefetch, Q, Subquery, Value, When
+from django.db.models.expressions import RawSQL
+from django.db.models.functions import Least
 from rest_framework.decorators import api_view
+from rest_framework.exceptions import NotFound
 from rest_framework.response import Response
 
 from catalog.models import Product, ProductImage, ProductVariant
 
 from .pagination import page_response, paginate
-from .serializers import ProductListSerializer, ProductQuerySerializer
+from .serializers import (
+    ProductDetailSerializer,
+    ProductListSerializer,
+    ProductQuerySerializer,
+    ReviewQuerySerializer,
+    ReviewSerializer,
+)
 
 # Every sort ends with id, so products with the same value keep a fixed order
 # and paging never shows a product twice or skips one.
@@ -17,6 +28,24 @@ SORT_ORDER = {
     "rating": [F("rating_average").desc(nulls_last=True), "id"],  # unrated last
     "popular": ["-sales_count", "id"],
 }
+
+REVIEW_ORDER = {
+    "newest": ["-created_at", "id"],
+    "helpful": ["-helpful_count", "-created_at", "id"],
+}
+
+# Similar products: points for what a candidate has in common with the product.
+SIMILARITY_WEIGHTS = {
+    "same_subcategory": 3,
+    "same_main_category": 2,
+    "same_brand": 2,
+    "same_material": 2,
+    "shared_tag": 1,  # per shared tag, at most MAX_SHARED_TAGS
+    "similar_price": 1,  # lowest price within ±30%
+}
+MAX_SHARED_TAGS = 3
+SIMILAR_PRICE_RANGE = Decimal("0.30")
+SIMILAR_LIMIT = 4
 
 
 def visible_products():
@@ -33,6 +62,14 @@ def with_card_data(queryset):
         # Highest variant price, so the UI can show "from €X" only when prices differ.
         max_price=Subquery(variants.order_by("-price").values("price")[:1]),
     ).prefetch_related(Prefetch("images", queryset=ProductImage.objects.order_by("position")))
+
+
+def get_visible_product(slug, queryset=None):
+    """The product with this slug, or a 404 if it doesn't exist or is hidden (R1)."""
+    product = (queryset if queryset is not None else visible_products()).filter(slug=slug).first()
+    if product is None:
+        raise NotFound(f"Product '{slug}' not found.")
+    return product
 
 
 def filter_products(queryset, params):
@@ -60,6 +97,50 @@ def filter_products(queryset, params):
     return queryset.order_by(*SORT_ORDER[params["sort"]])
 
 
+def similar_products(product):
+    """Top 4 visible products by similarity score, computed in one SQL query.
+
+    Never the product itself, no duplicates (one row per product), only visible
+    products (R1), only products with a score above 0, and sold-out products last.
+    """
+    w = SIMILARITY_WEIGHTS
+    main_category_id = product.category.parent_id or product.category_id
+
+    def points(condition, weight):
+        return Case(When(condition, then=Value(weight)), default=Value(0), output_field=IntegerField())
+
+    score = (
+        points(Q(category_id=product.category_id), w["same_subcategory"])
+        + points(Q(category__parent_id=main_category_id) | Q(category_id=main_category_id), w["same_main_category"])
+        + points(Q(brand_id=product.brand_id), w["same_brand"])
+    )
+
+    material = product.attributes.get("material")
+    if material:
+        score += points(Q(attributes__material=material), w["same_material"])
+
+    if product.tags:
+        # Number of tags both products have; the tag list is passed as a query parameter, never glued in.
+        shared_tags = RawSQL(
+            "cardinality(ARRAY(SELECT unnest(product.tags) INTERSECT SELECT unnest(%s::varchar[])))",
+            (list(product.tags),),
+            output_field=IntegerField(),
+        )
+        score += Least(shared_tags, Value(MAX_SHARED_TAGS)) * Value(w["shared_tag"])
+
+    if product.min_price is not None:
+        low = product.min_price * (1 - SIMILAR_PRICE_RANGE)
+        high = product.min_price * (1 + SIMILAR_PRICE_RANGE)
+        score += points(Q(min_price__range=(low, high)), w["similar_price"])
+
+    return (
+        with_card_data(visible_products().exclude(pk=product.pk))
+        .annotate(similarity=score)
+        .filter(similarity__gt=0)
+        .order_by("-in_stock", "-similarity", "-sales_count", "id")[:SIMILAR_LIMIT]
+    )
+
+
 @api_view(["GET"])
 def product_list(request):
     params = ProductQuerySerializer(data=request.query_params)
@@ -69,6 +150,33 @@ def product_list(request):
     products = filter_products(with_card_data(visible_products()), p)
     rows, meta = paginate(products, p["page"], p["limit"])
     return Response(page_response(ProductListSerializer(rows, many=True).data, meta))
+
+
+@api_view(["GET"])
+def product_detail(request, slug):
+    queryset = with_card_data(visible_products()).select_related("category__parent").prefetch_related(
+        Prefetch("variants", queryset=ProductVariant.objects.order_by("id"))
+    )
+    product = get_visible_product(slug, queryset)
+    return Response(ProductDetailSerializer(product).data)
+
+
+@api_view(["GET"])
+def product_reviews(request, slug):
+    params = ReviewQuerySerializer(data=request.query_params)
+    params.is_valid(raise_exception=True)
+    p = params.validated_data
+
+    product = get_visible_product(slug)
+    reviews = product.reviews.order_by(*REVIEW_ORDER[p["sort"]])
+    rows, meta = paginate(reviews, p["page"], p["limit"])
+    return Response(page_response(ReviewSerializer(rows, many=True).data, meta))
+
+
+@api_view(["GET"])
+def product_similar(request, slug):
+    product = get_visible_product(slug, visible_products().select_related("category"))
+    return Response({"items": ProductListSerializer(similar_products(product), many=True).data})
 
 
 @api_view(["GET"])
