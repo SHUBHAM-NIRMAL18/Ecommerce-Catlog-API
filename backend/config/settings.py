@@ -80,4 +80,7 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
+# catalog.json imported by `python manage.py seed`
+CATALOG_FILE = Path(os.getenv("CATALOG_FILE", BASE_DIR.parent / "data" / "catalog.json"))
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
