@@ -102,6 +102,8 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
     "UNAUTHENTICATED_USER": None,
+    # Prices as JSON numbers (349.0), not strings ("349.00").
+    "COERCE_DECIMAL_TO_STRING": False,
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
