@@ -277,6 +277,11 @@ def clean_catalog(raw):
             "updated_at": parse_datetime(p.get("updatedAt") or p["createdAt"]),
         })
 
+    used_categories = {p["categoryId"] for p in raw_products}
+    for c in raw_categories:
+        if c.get("parentId") is not None and c["id"] not in used_categories:
+            out.notes.append(f"category {c['slug']}: has no products; the API returns productCount 0")
+
     if dropped_attributes:
         detail = ", ".join(f"{key} x{count}" for key, count in dropped_attributes.most_common())
         out.fixes.append(
