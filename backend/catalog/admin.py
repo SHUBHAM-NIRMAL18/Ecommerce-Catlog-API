@@ -39,8 +39,8 @@ class ProductImageInline(admin.TabularInline):
 
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ["name", "brand", "category", "status", "rating_average", "review_count"]
-    list_filter = ["status", "brand", "category"]
+    list_display = ["name", "brand", "category", "status", "min_price", "in_stock", "rating_average", "review_count"]
+    list_filter = ["status", "in_stock", "brand", "category"]
     search_fields = ["name", "slug", "source_id"]
     list_select_related = ["brand", "category"]
     inlines = [ProductVariantInline, ProductImageInline]
