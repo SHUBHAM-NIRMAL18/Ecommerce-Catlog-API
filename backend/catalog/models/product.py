@@ -1,4 +1,5 @@
 from django.contrib.postgres.fields import ArrayField
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.db.models import F, Q
 
@@ -30,9 +31,35 @@ class Product(SourcedModel):
     views = models.PositiveIntegerField(default=0)
     sales_count = models.PositiveIntegerField(default=0)
 
+    # Listing fields derived from variants and relations; the seed keeps them in sync.
+    min_price = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Lowest variant price (R2). Used for price filters and sorting.",
+    )
+    in_stock = models.BooleanField(default=False, help_text="True if any variant has stock > 0 (R3).")
+    search_text = models.TextField(
+        blank=True, editable=False,
+        help_text="Lowercased name, description, brand, categories, material and tags for `q` search.",
+    )
+
     class Meta:
         db_table = "product"
         ordering = ["-created_at"]
+        # Every public query filters status='active' (R1), so the indexes are partial:
+        # smaller, and they skip draft/archived rows. `id` is the tiebreaker for stable paging.
+        indexes = [
+            GinIndex(
+                fields=["search_text"], opclasses=["gin_trgm_ops"],
+                name="product_search_trgm", condition=Q(status="active"),
+            ),
+            models.Index(fields=["min_price", "id"], name="product_price", condition=Q(status="active")),
+            models.Index(fields=["-created_at", "id"], name="product_newest", condition=Q(status="active")),
+            models.Index(
+                F("rating_average").desc(nulls_last=True), F("id"),
+                name="product_rating", condition=Q(status="active"),
+            ),
+            models.Index(fields=["-sales_count", "id"], name="product_popular", condition=Q(status="active")),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=Q(rating_average__isnull=True) | Q(rating_average__gte=1, rating_average__lte=5),
