@@ -61,6 +61,12 @@ class ProductQuerySerializer(PageQuerySerializer):
         return data
 
 
+class ReviewQuerySerializer(PageQuerySerializer):
+    """GET /api/products/:slug/reviews. `helpful` is the bonus sort by helpfulCount."""
+
+    sort = serializers.ChoiceField(choices=["newest", "helpful"], default="newest")
+
+
 # ---------- Output ----------
 
 class BrandRefSerializer(serializers.Serializer):
@@ -103,3 +109,47 @@ class ProductListSerializer(serializers.Serializer):
     def get_image(self, product):
         first = next(iter(product.images.all()), None)  # prefetched, ordered by position
         return ImageSerializer(first).data if first else None
+
+
+class VariantSerializer(serializers.Serializer):
+    sku = serializers.CharField()
+    color = serializers.CharField()
+    size = serializers.CharField()
+    price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    compareAtPrice = serializers.SerializerMethodField()
+    stock = serializers.IntegerField()
+
+    def get_compareAtPrice(self, variant):
+        return sale_price(variant.price, variant.compare_at_price)
+
+
+class ProductDetailSerializer(ProductListSerializer):
+    """Everything on the product page. Adds to the card fields; `image` is replaced by `images`."""
+
+    image = None
+    category = None
+    description = serializers.CharField()
+    categoryPath = serializers.SerializerMethodField()
+    attributes = serializers.JSONField()  # null values were dropped by the seed
+    features = serializers.ListField(child=serializers.CharField())
+    tags = serializers.ListField(child=serializers.CharField())
+    images = ImageSerializer(many=True)
+    variants = VariantSerializer(many=True)
+
+    def get_categoryPath(self, product):
+        """Main category first, then the sub-category: [Home Textiles, Rugs]."""
+        path, category = [], product.category
+        while category is not None:
+            path.insert(0, {"slug": category.slug, "name": category.name})
+            category = category.parent
+        return path
+
+
+class ReviewSerializer(serializers.Serializer):
+    id = serializers.CharField(source="source_id")
+    rating = serializers.IntegerField()
+    title = serializers.CharField()
+    body = serializers.CharField(allow_null=True)
+    verifiedPurchase = serializers.BooleanField(source="verified_purchase")
+    helpfulCount = serializers.IntegerField(source="helpful_count")
+    createdAt = serializers.DateTimeField(source="created_at")
