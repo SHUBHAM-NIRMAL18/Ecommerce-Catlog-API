@@ -28,11 +28,13 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "django.contrib.postgres",
+    "corsheaders",
     "rest_framework",
     "catalog",
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -80,7 +82,26 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 
-# catalog.json imported by `python manage.py seed`
+# catalog.json imported by `python manage.py seed`, and its images served at /images/
 CATALOG_FILE = Path(os.getenv("CATALOG_FILE", BASE_DIR.parent / "data" / "catalog.json"))
+IMAGES_DIR = Path(os.getenv("IMAGES_DIR", CATALOG_FILE.parent / "images"))
+
+# Base URL the *browser* uses to reach this API, for absolute image URLs.
+# Not taken from the request: in Docker the frontend calls http://api:8000, which a browser can't open.
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "http://localhost:8000").rstrip("/")
+
+# API paths have no trailing slash (/api/products), so don't redirect to add one.
+APPEND_SLASH = False
+
+CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS", "http://localhost:3000")
+
+REST_FRAMEWORK = {
+    "EXCEPTION_HANDLER": "catalog.api.errors.exception_handler",
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    # Public, read-only API: no login, sessions or CSRF.
+    "DEFAULT_AUTHENTICATION_CLASSES": [],
+    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+    "UNAUTHENTICATED_USER": None,
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
