@@ -247,26 +247,140 @@ def test_paging_returns_every_product_exactly_once_in_sort_order(client, catalog
     assert keys == sorted(keys)
 
 
-@pytest.mark.parametrize("q", ["handwov", "oak dining", "  OAK   Dining ", "wool rug", "candle", "lighting", "zzzz"])
-def test_search_matches_all_words_partially_in_all_searched_fields(client, catalog, q):
+def haystack(catalog, p):
+    """Everything `q` searches for one product, built straight from catalog.json."""
     brands = {b["id"]: b["name"] for b in catalog["brands"]}
     categories = {c["id"]: c for c in catalog["categories"]}
+    category = categories[p["categoryId"]]
+    parent = categories.get(category["parentId"]) if category["parentId"] else None
+    fields = [p["name"], p["description"], brands[p["brandId"]], category["name"],
+              parent["name"] if parent else "", p["attributes"].get("material") or "", *norm_tags(p["tags"])]
+    return " ".join(fields).lower()
 
-    def haystack(p):
-        category = categories[p["categoryId"]]
-        parent = categories.get(category["parentId"]) if category["parentId"] else None
-        fields = [p["name"], p["description"], brands[p["brandId"]], category["name"],
-                  parent["name"] if parent else "", p["attributes"].get("material") or "", *norm_tags(p["tags"])]
-        return " ".join(fields).lower()
 
-    words = q.lower().split()
-    expected = {p["id"] for p in active(catalog) if all(w in haystack(p) for w in words)}
+def matching(catalog, words):
+    return {p["id"] for p in active(catalog) if all(w in haystack(catalog, p) for w in words)}
+
+
+@pytest.mark.parametrize("q", ["handwov", "oak dining", "  OAK   Dining ", "wool rug", "candle", "lighting", "zzzz"])
+def test_search_matches_all_words_partially_in_all_searched_fields(client, catalog, q):
+    expected = matching(catalog, q.lower().split())
     items, _ = fetch_all(client, "/api/products", q=q)
     assert {i["id"] for i in items} == expected
+    assert get(client, "/api/products", q=q).json()["correctedQuery"] is None
     if q == "zzzz":
         assert expected == set()
     else:
         assert expected  # the query means something in this data
+
+
+# ---------- typo tolerance and autocomplete (bonus) ----------
+
+@pytest.mark.parametrize("typo, meant", [
+    ("candel", "candle"),
+    ("lmap", "lamp"),
+    ("oka", "oak"),
+    ("jtue", "jute"),
+    ("mirorr", "mirror"),
+    ("CUHSION", "cushion"),
+    ("oak tabel", "oak table"),
+    ("velvt  cushon", "velvet cushion"),
+    ("handwov rgu", "handwov rug"),
+])
+def test_typos_are_corrected_to_a_real_catalog_word(client, catalog, typo, meant):
+    for word in typo.lower().split():
+        if word not in meant.split():
+            assert matching(catalog, [word]) == set()
+    expected = matching(catalog, meant.split())
+    assert expected
+
+    items, total = fetch_all(client, "/api/products", q=typo)
+    assert {i["id"] for i in items} == expected
+    assert total == len(expected)
+    assert get(client, "/api/products", q=typo).json()["correctedQuery"] == meant
+
+
+@pytest.mark.parametrize("q", ["xyzq", "pilow", "qq", "zzzzzzzz"])
+def test_words_with_no_close_match_stay_unmatched(client, q):
+    body = get(client, "/api/products", q=q).json()
+    assert body["total"] == 0 and body["items"] == []
+    assert body["correctedQuery"] is None
+
+
+def test_corrected_search_still_applies_filters_and_hides_hidden_products(client, catalog):
+    hidden = {p["id"] for p in catalog["products"] if p["status"] != "active"}
+    items, _ = fetch_all(client, "/api/products", q="candel", inStock="true", sort="price_asc")
+    by_id = {p["id"]: p for p in catalog["products"]}
+    expected = {i for i in matching(catalog, ["candle"]) if any(v["stock"] > 0 for v in by_id[i]["variants"])}
+    assert {i["id"] for i in items} == expected
+    assert not hidden & {i["id"] for i in items}
+    prices = [i["price"] for i in items]
+    assert prices == sorted(prices)
+
+
+def test_edit_distance_counts_a_swap_as_one_edit():
+    from catalog.api.search import closest_word, edit_distance
+
+    assert edit_distance("candel", "candle", 2) == 1
+    assert edit_distance("lmap", "lamp", 1) == 1
+    assert edit_distance("wol", "wool", 1) == 1
+    assert edit_distance("rug", "rug", 1) == 0
+    assert edit_distance("kitten", "sitting", 3) == 3
+    assert edit_distance("abc", "abcdefgh", 2) == 3
+    words = [("candle", 8), ("candles", 3), ("can", 1)]
+    assert closest_word("candel", words) == "candle"
+    assert closest_word("candls", words) == "candle"
+    assert closest_word("candlees", words) == "candles"
+    assert closest_word("zzzzzz", words) is None
+
+
+def suggest(client, q):
+    response = get(client, "/api/search/suggest", q=q)
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_suggest_ranks_name_matches_first_and_only_shows_visible_products(client, catalog):
+    body = suggest(client, "lamp")
+    names = [p["name"].lower() for p in body["products"]]
+    assert 0 < len(names) <= 6
+    assert all("lamp" in n for n in names)
+    visible = {p["slug"] for p in active(catalog)}
+    assert all(p["slug"] in visible for p in body["products"])
+    assert {"Floor Lamps", "Table Lamps"} <= {c["name"] for c in body["categories"]}
+    assert body["correctedQuery"] is None
+
+    oak = suggest(client, "oak")
+    assert all(p["name"].lower().startswith("oak") for p in oak["products"][:3])
+    assert [b["name"] for b in oak["brands"]] == ["Oakline"]
+
+
+def test_suggest_never_shows_hidden_products(client, catalog):
+    for product in catalog["products"]:
+        if product["status"] != "active":
+            body = suggest(client, product["name"])
+            assert product["slug"] not in {p["slug"] for p in body["products"]}
+
+
+def test_suggest_corrects_typos_and_skips_empty_groups(client, catalog):
+    body = suggest(client, "candel")
+    assert body["correctedQuery"] == "candle"
+    assert body["products"] and all(p["id"] in matching(catalog, ["candle"]) for p in body["products"])
+    assert [c["name"] for c in body["categories"]] == ["Candles"]
+
+    glassware = suggest(client, "glassware")
+    assert "Glassware" not in [c["name"] for c in glassware["categories"]]
+    stone_hill = suggest(client, "stone hill")
+    assert "Stone Hill" not in [b["name"] for b in stone_hill["brands"]]
+
+
+@pytest.mark.parametrize("q", ["", "   "])
+def test_suggest_with_no_words_returns_empty_groups(client, q):
+    assert suggest(client, q) == {"products": [], "categories": [], "brands": [], "correctedQuery": None}
+
+
+def test_suggest_rejects_overlong_input(client):
+    assert_error(get(client, "/api/search/suggest", q="a" * 101), 400, "VALIDATION_ERROR", "q")
 
 
 # ---------- detail, reviews, similar, counts ----------
