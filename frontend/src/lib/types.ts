@@ -62,6 +62,17 @@ export type Page<T> = {
   totalPages: number;
 };
 
+export type ProductPage = Page<ProductCard> & {
+  correctedQuery: string | null;
+};
+
+export type Suggestions = {
+  products: ProductCard[];
+  categories: Ref[];
+  brands: Ref[];
+  correctedQuery: string | null;
+};
+
 export type CategoryNode = Ref & {
   productCount: number;
   children: CategoryNode[];

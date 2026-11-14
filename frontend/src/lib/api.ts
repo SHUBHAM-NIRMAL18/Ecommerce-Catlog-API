@@ -7,8 +7,10 @@ import type {
   Page,
   ProductCard,
   ProductDetail,
+  ProductPage,
   Review,
   SearchParams,
+  Suggestions,
 } from "./types";
 
 const SERVER_API_URL = process.env.API_URL ?? "http://localhost:8000";
@@ -45,7 +47,7 @@ function baseUrl() {
 
 type Params = Record<string, string | number | undefined>;
 
-async function request<T>(path: string, params: Params = {}): Promise<T> {
+async function request<T>(path: string, params: Params = {}, signal?: AbortSignal): Promise<T> {
   const url = new URL(path, baseUrl());
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
@@ -53,8 +55,9 @@ async function request<T>(path: string, params: Params = {}): Promise<T> {
 
   let response: Response;
   try {
-    response = await fetch(url, { cache: "no-store" });
-  } catch {
+    response = await fetch(url, { cache: "no-store", signal });
+  } catch (error) {
+    if (signal?.aborted) throw error;
     throw new ApiError(0, "NETWORK_ERROR", "The catalog is not reachable right now. Please try again.");
   }
 
@@ -81,7 +84,8 @@ export function productParams(searchParams: SearchParams): Params {
 const slugPath = (slug: string) => encodeURIComponent(slug);
 
 export const api = {
-  products: (params: Params) => request<Page<ProductCard>>("/api/products", params),
+  products: (params: Params) => request<ProductPage>("/api/products", params),
+  suggest: (q: string, signal?: AbortSignal) => request<Suggestions>("/api/search/suggest", { q }, signal),
   product: (slug: string) => request<ProductDetail>(`/api/products/${slugPath(slug)}`),
   reviews: (slug: string, page = 1, sort = "newest", limit = 5) =>
     request<Page<Review>>(`/api/products/${slugPath(slug)}/reviews`, { page, sort, limit }),
