@@ -101,3 +101,8 @@ export function attributeRows(attributes: Record<string, AttributeValue | null |
       return { key, label: spec?.label ?? humanize(key), value: formatValue(value, spec?.unit) };
     });
 }
+
+export function collectionDates(endsAt: string | null) {
+  const end = endsAt ? formatDate(endsAt) : "";
+  return end ? `Until ${end}` : "";
+}
