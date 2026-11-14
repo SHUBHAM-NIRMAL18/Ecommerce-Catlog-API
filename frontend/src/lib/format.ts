@@ -6,9 +6,14 @@ export function formatPrice(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) ? euro.format(value) : "Price unavailable";
 }
 
+export function formatPriceParts(price: number | null, maxPrice: number | null) {
+  const varies = price !== null && maxPrice !== null && maxPrice > price;
+  return { prefix: varies ? "from" : "", amount: formatPrice(price) };
+}
+
 export function priceLabel(price: number | null, maxPrice: number | null) {
-  if (price !== null && maxPrice !== null && maxPrice > price) return `from ${formatPrice(price)}`;
-  return formatPrice(price);
+  const { prefix, amount } = formatPriceParts(price, maxPrice);
+  return prefix ? `${prefix} ${amount}` : amount;
 }
 
 export function stockLabel(stock: number) {
