@@ -281,6 +281,10 @@ def clean_catalog(raw):
     for c in raw_categories:
         if c.get("parentId") is not None and c["id"] not in used_categories:
             out.notes.append(f"category {c['slug']}: has no products; the API returns productCount 0")
+    used_brands = {p["brandId"] for p in raw_products}
+    for b in raw_brands:
+        if b["id"] not in used_brands:
+            out.notes.append(f"brand {b['slug']}: has no products; the API returns productCount 0")
 
     if dropped_attributes:
         detail = ", ".join(f"{key} x{count}" for key, count in dropped_attributes.most_common())
