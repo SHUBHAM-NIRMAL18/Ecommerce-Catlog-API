@@ -10,6 +10,7 @@ from rest_framework.response import Response
 
 from catalog.models import Brand, Category, Collection, Product, ProductImage, ProductVariant
 
+from . import search
 from .pagination import PageQuerySerializer, page_response, paginate
 from .serializers import (
     BrandSerializer,
@@ -19,6 +20,7 @@ from .serializers import (
     ProductQuerySerializer,
     ReviewQuerySerializer,
     ReviewSerializer,
+    SuggestQuerySerializer,
 )
 
 # Every sort ends with id, so products with the same value keep a fixed order
@@ -76,9 +78,7 @@ def get_visible_product(slug, queryset=None):
 
 def filter_products(queryset, params):
     """Applies the validated filters. Everything runs in the database query."""
-    for word in params.get("q") or []:
-        # search_text is stored lowercase, so `contains` (not icontains) can use the trigram index.
-        queryset = queryset.filter(search_text__contains=word)
+    queryset = search.match_terms(queryset, params.get("q") or [])
 
     category = params.get("category")
     if category is not None:
@@ -148,10 +148,32 @@ def product_list(request):
     params = ProductQuerySerializer(data=request.query_params)
     params.is_valid(raise_exception=True)
     p = params.validated_data
+    p["q"], corrected = search.correct_terms(p.get("q") or [])
 
     products = filter_products(with_card_data(visible_products()), p)
     rows, meta = paginate(products, p["page"], p["limit"])
-    return Response(page_response(ProductListSerializer(rows, many=True).data, meta))
+    return Response({
+        **page_response(ProductListSerializer(rows, many=True).data, meta),
+        "correctedQuery": corrected,
+    })
+
+
+@api_view(["GET"])
+def search_suggest(request):
+    """Autocomplete: a few products (name matches first), categories and brands for the typed text."""
+    params = SuggestQuerySerializer(data=request.query_params)
+    params.is_valid(raise_exception=True)
+    terms, corrected = search.correct_terms(params.validated_data["q"])
+    if not terms:
+        return Response({"products": [], "categories": [], "brands": [], "correctedQuery": None})
+
+    products = search.suggest_products(with_card_data(visible_products()), terms)
+    return Response({
+        "products": ProductListSerializer(products, many=True).data,
+        "categories": [{"slug": c.slug, "name": c.name} for c in search.suggest_categories(terms)],
+        "brands": [{"slug": b.slug, "name": b.name} for b in search.suggest_brands(terms)],
+        "correctedQuery": corrected,
+    })
 
 
 @api_view(["GET"])
