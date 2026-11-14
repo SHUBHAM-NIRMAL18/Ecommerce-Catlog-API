@@ -4,7 +4,8 @@ import { notFound } from "next/navigation";
 import { cache } from "react";
 
 import { Gallery } from "@/components/Gallery";
-import { Rating } from "@/components/ProductCard";
+import { ProductGrid, Rating } from "@/components/ProductCard";
+import { Reviews } from "@/components/Reviews";
 import { VariantPicker } from "@/components/VariantPicker";
 import { api, isNotFound } from "@/lib/api";
 import { attributeRows } from "@/lib/format";
@@ -26,6 +27,8 @@ export async function generateMetadata({ params }: PageProps<"/products/[slug]">
 export default async function ProductPage({ params }: PageProps<"/products/[slug]">) {
   const product = await getProduct((await params).slug);
   const attributes = attributeRows(product.attributes);
+  const [reviews, similar] = await Promise.allSettled([api.reviews(product.slug), api.similar(product.slug)]);
+  const similarItems = similar.status === "fulfilled" ? similar.value.items : [];
 
   return (
     <article>
@@ -94,6 +97,22 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
             </section>
           )}
         </div>
+      </div>
+
+      <div className="mt-16 flex flex-col gap-16 border-t border-line pt-12">
+        <Reviews
+          key={product.id}
+          slug={product.slug}
+          average={product.ratingAverage}
+          initial={reviews.status === "fulfilled" ? reviews.value : null}
+        />
+
+        {similarItems.length > 0 && (
+          <section aria-labelledby="similar-title">
+            <h2 id="similar-title" className="mb-6 font-serif text-2xl">You may also like</h2>
+            <ProductGrid products={similarItems} />
+          </section>
+        )}
       </div>
     </article>
   );
