@@ -3,7 +3,7 @@ import { Pagination } from "@/components/Pagination";
 import { ProductGrid } from "@/components/ProductCard";
 import { PrimaryLink, SecondaryLink, StateMessage } from "@/components/States";
 import { ApiError, api, firstValue, productParams } from "@/lib/api";
-import type { CategoryNode, Page, ProductCard, SearchParams } from "@/lib/types";
+import type { CategoryNode, ProductPage, SearchParams } from "@/lib/types";
 
 function categoryName(categories: CategoryNode[], slug: string | undefined): string | undefined {
   if (!slug) return undefined;
@@ -24,7 +24,7 @@ function hrefWithout(searchParams: SearchParams, keys: string[]) {
   return query ? `/?${query}` : "/";
 }
 
-type ProductsResult = { data: Page<ProductCard> } | { error: ApiError };
+type ProductsResult = { data: ProductPage } | { error: ApiError };
 
 async function loadProducts(searchParams: SearchParams): Promise<ProductsResult> {
   try {
@@ -87,7 +87,13 @@ export default async function HomePage({ searchParams }: PageProps<"/">) {
             <>
               <div className="mb-4 flex items-center justify-between gap-3">
                 <p className="text-sm text-muted">
-                  {q ? (
+                  {q && result.data.correctedQuery ? (
+                    <>
+                      No exact matches for <span className="line-through">“{q}”</span>. Showing {result.data.total}{" "}
+                      {result.data.total === 1 ? "result" : "results"} for{" "}
+                      <span className="font-medium text-ink">“{result.data.correctedQuery}”</span>
+                    </>
+                  ) : q ? (
                     <>
                       {result.data.total} {result.data.total === 1 ? "result" : "results"} for{" "}
                       <span className="font-medium text-ink">“{q}”</span>
