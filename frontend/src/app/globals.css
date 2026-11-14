@@ -2,8 +2,19 @@
 
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+
+  --color-canvas: #f7f3ee;
+  --color-ink: #2b2420;
+  --color-muted: #7a6f66;
+  --color-line: #e7dfd6;
+  --color-clay-50: #fbf1ec;
+  --color-clay-100: #f5ddd1;
+  --color-clay-600: #a4532f;
+  --color-clay-700: #8a4325;
+  --color-clay-800: #6e351d;
 }
 
 body {
-  @apply bg-stone-50 text-stone-900 antialiased;
+  @apply bg-canvas text-ink antialiased;
 }
