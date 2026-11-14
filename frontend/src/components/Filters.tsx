@@ -2,8 +2,19 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { createContext, useContext, useEffect, useState, useTransition, type FormEvent, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useState,
+  useTransition,
+  type FormEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 
+import { MIN_SUGGEST_LENGTH, SuggestionList, toOptions, useSuggestions } from "@/components/SearchSuggestions";
 import { formatPrice } from "@/lib/format";
 import type { Brand, CategoryNode } from "@/lib/types";
 
@@ -78,10 +89,14 @@ const normalize = (value: string) => value.trim().replace(/\s+/g, " ");
 
 export function SearchBox() {
   const { params, update } = useFilters();
+  const router = useRouter();
+  const listId = useId();
   const urlQ = params.get("q") ?? "";
   const [q, setQ] = useState(urlQ);
   const [seenUrlQ, setSeenUrlQ] = useState(urlQ);
   const [pushed, setPushed] = useState(urlQ);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
 
   if (urlQ !== seenUrlQ) {
     setSeenUrlQ(urlQ);
@@ -91,23 +106,58 @@ export function SearchBox() {
     }
   }
 
+  const query = normalize(q);
+  const data = useSuggestions(query);
+  const options = data ? toOptions(data) : [];
+  const showList = open && query.length >= MIN_SUGGEST_LENGTH && data !== null;
+
   const search = (value: string) => {
     setPushed(value);
     update({ q: value || null });
   };
 
+  const close = () => {
+    setOpen(false);
+    setActive(-1);
+  };
+
   useEffect(() => {
-    const value = normalize(q);
-    if (value === pushed) return;
-    const timer = setTimeout(() => search(value), 350);
+    if (query === pushed) return;
+    const timer = setTimeout(() => search(query), 350);
     return () => clearTimeout(timer);
   });
 
   const onSubmit = (event: FormEvent) => {
     event.preventDefault();
-    const value = normalize(q);
-    if (value !== pushed) search(value);
+    const option = showList ? options[active] : undefined;
+    close();
+    if (option) router.push(option.href);
+    else if (query !== pushed) search(query);
   };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Escape") {
+      if (showList) event.preventDefault();
+      close();
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    if (!showList) {
+      setOpen(true);
+      return;
+    }
+    if (options.length === 0) return;
+    const step = event.key === "ArrowDown" ? 1 : -1;
+    setActive((current) => {
+      const next = current + step;
+      if (next >= options.length) return -1;
+      if (next < -1) return options.length - 1;
+      return next;
+    });
+  };
+
+  const activeOption = showList && active >= 0 ? options[active] : undefined;
 
   return (
     <form role="search" onSubmit={onSubmit} className="relative">
@@ -119,8 +169,20 @@ export function SearchBox() {
       <input
         id="search"
         type="search"
+        role="combobox"
+        aria-expanded={showList}
+        aria-controls={listId}
+        aria-autocomplete="list"
+        aria-activedescendant={activeOption ? `${listId}-${activeOption.id}` : undefined}
         value={q}
-        onChange={(event) => setQ(event.target.value)}
+        onChange={(event) => {
+          setQ(event.target.value);
+          setOpen(true);
+          setActive(-1);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={close}
+        onKeyDown={onKeyDown}
         placeholder="Search rugs, lamps, oak, linen…"
         maxLength={100}
         autoComplete="off"
@@ -131,6 +193,7 @@ export function SearchBox() {
           type="button"
           onClick={() => {
             setQ("");
+            close();
             search("");
           }}
           aria-label="Clear search"
@@ -138,6 +201,20 @@ export function SearchBox() {
         >
           ×
         </button>
+      )}
+      {showList && (
+        <SuggestionList
+          id={listId}
+          query={query}
+          data={data}
+          options={options}
+          active={active}
+          onPick={close}
+          onSearchAll={() => {
+            close();
+            if (query !== pushed) search(query);
+          }}
+        />
       )}
     </form>
   );
