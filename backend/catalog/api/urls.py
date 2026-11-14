@@ -9,6 +9,7 @@ urlpatterns = [
     path("products/<slug:slug>", views.product_detail),
     path("products/<slug:slug>/reviews", views.product_reviews),
     path("products/<slug:slug>/similar", views.product_similar),
+    path("search/suggest", views.search_suggest),
     path("categories", views.category_list),
     path("brands", views.brand_list),
     path("collections", views.collection_list),

@@ -61,6 +61,15 @@ class ProductQuerySerializer(PageQuerySerializer):
         return data
 
 
+class SuggestQuerySerializer(serializers.Serializer):
+    """GET /api/search/suggest. Same word rules as the product search."""
+
+    q = serializers.CharField(required=False, allow_blank=True, max_length=100, default="")
+
+    def validate_q(self, value):
+        return value.lower().split()
+
+
 class ReviewQuerySerializer(PageQuerySerializer):
     """GET /api/products/:slug/reviews. `helpful` is the bonus sort by helpfulCount."""
 
