@@ -7,6 +7,8 @@ import { api } from "@/lib/api";
 import { collectionDates } from "@/lib/format";
 import type { Collection, Image as ProductImage } from "@/lib/types";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = { title: "Collections · Home & Living" };
 
 function Mosaic({ images }: { images: ProductImage[] }) {
